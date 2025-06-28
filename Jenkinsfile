@@ -14,40 +14,8 @@ pipeline {
                 echo "Run Tests: ${params.DO_TEST}"
 
                 script {
-                    // Verificar Java disponível
-                    try {
-                        sh 'java -version'
-                    } catch (Exception e) {
-                        echo "Java não encontrado no PATH padrão"
+                    sh 'java -version'
 
-                        // Tentar localizar Java
-                        def javaLocations = [
-                            '/usr/lib/jvm/java-21-openjdk/bin/java',
-                            '/usr/lib/jvm/java-17-openjdk/bin/java',
-                            '/usr/lib/jvm/java-11-openjdk/bin/java',
-                            '/usr/bin/java',
-                            '/opt/java/openjdk/bin/java'
-                        ]
-
-                        def javaFound = false
-                        for (location in javaLocations) {
-                            try {
-                                sh "test -f ${location} && ${location} -version"
-                                env.JAVA_CMD = location
-                                javaFound = true
-                                echo "Java encontrado em: ${location}"
-                                break
-                            } catch (Exception ex) {
-                                // Continuar procurando
-                            }
-                        }
-
-                        if (!javaFound) {
-                            error "Java não encontrado no sistema"
-                        }
-                    }
-
-                    // Configurar opções de teste
                     if (params.DO_TEST) {
                         env.TEST_OPTIONS = ''
                     } else {
@@ -81,63 +49,22 @@ pipeline {
                 echo "=== Building Application ==="
 
                 script {
-                    // Detectar tipo de projeto
                     if (fileExists('gradlew')) {
                         echo "Projeto Gradle detectado (gradlew)"
                         sh 'chmod +x gradlew'
-
-                        // Verificar se precisa configurar JAVA_HOME
-                        if (env.JAVA_CMD) {
-                            def javaHome = env.JAVA_CMD.replaceAll('/bin/java$', '')
-                            env.JAVA_HOME = javaHome
-                            echo "JAVA_HOME configurado: ${javaHome}"
-                        }
-
                         sh "./gradlew clean build ${env.TEST_OPTIONS ?: ''}"
-
                     } else if (fileExists('build.gradle') || fileExists('build.gradle.kts')) {
                         echo "Projeto Gradle detectado (build.gradle)"
-
-                        // Verificar se gradle está disponível
-                        try {
-                            sh 'gradle --version'
-                            sh "gradle clean build ${env.TEST_OPTIONS ?: ''}"
-                        } catch (Exception e) {
-                            echo "Gradle não encontrado, tentando com gradlew..."
-                            // Criar gradlew se não existir
-                            sh '''
-                                if [ ! -f gradlew ]; then
-                                    echo "Criando gradle wrapper..."
-                                    gradle wrapper || echo "Não foi possível criar wrapper"
-                                fi
-                            '''
-
-                            if (fileExists('gradlew')) {
-                                sh 'chmod +x gradlew'
-                                sh "./gradlew clean build ${env.TEST_OPTIONS ?: ''}"
-                            } else {
-                                error "Não foi possível executar o build Gradle"
-                            }
-                        }
-
+                        sh "gradle clean build ${env.TEST_OPTIONS ?: ''}"
                     } else if (fileExists('pom.xml')) {
                         echo "Projeto Maven detectado"
-
-                        // Verificar se Maven está disponível
-                        try {
-                            sh 'mvn --version'
-                        } catch (Exception e) {
-                            error "Maven não encontrado no sistema"
-                        }
-
                         if (env.TEST_OPTIONS && env.TEST_OPTIONS.contains('-x test')) {
                             sh 'mvn clean compile -DskipTests=true'
                         } else {
                             sh 'mvn clean compile'
                         }
-
                     } else {
-                        error 'Nenhum arquivo de build encontrado (gradlew, build.gradle, pom.xml)'
+                        error 'Nenhum arquivo de build encontrado'
                     }
                 }
 
@@ -171,22 +98,35 @@ pipeline {
             post {
                 always {
                     script {
-                        // Publicar resultados de teste
                         try {
                             def testResultsPublished = false
 
-                            // Gradle
+                            // Tentar publicar resultados de teste do Gradle
                             if (fileExists('build/test-results/test/')) {
-                                publishTestResults testResultsPattern: 'build/test-results/test/*.xml'
-                                echo "Resultados de teste Gradle publicados"
-                                testResultsPublished = true
+                                def gradleResults = sh(
+                                    script: 'find build/test-results/test -name "*.xml" | head -1',
+                                    returnStdout: true
+                                ).trim()
+
+                                if (gradleResults) {
+                                    junit 'build/test-results/test/*.xml'
+                                    echo "Resultados de teste Gradle publicados"
+                                    testResultsPublished = true
+                                }
                             }
 
-                            // Maven
+                            // Tentar publicar resultados de teste do Maven
                             if (!testResultsPublished && fileExists('target/surefire-reports/')) {
-                                publishTestResults testResultsPattern: 'target/surefire-reports/*.xml'
-                                echo "Resultados de teste Maven publicados"
-                                testResultsPublished = true
+                                def mavenResults = sh(
+                                    script: 'find target/surefire-reports -name "*.xml" | head -1',
+                                    returnStdout: true
+                                ).trim()
+
+                                if (mavenResults) {
+                                    junit 'target/surefire-reports/*.xml'
+                                    echo "Resultados de teste Maven publicados"
+                                    testResultsPublished = true
+                                }
                             }
 
                             if (!testResultsPublished) {
@@ -215,7 +155,6 @@ pipeline {
                     }
                 }
 
-                // Mostrar artefatos criados
                 sh '''
                     echo "=== Artefatos Criados ==="
                     echo "Gradle libs:"
@@ -229,11 +168,10 @@ pipeline {
             post {
                 success {
                     script {
-                        // Arquivar artefatos
                         try {
                             def artifactsArchived = false
 
-                            // Gradle
+                            // Arquivar artefatos do Gradle
                             if (fileExists('build/libs/')) {
                                 def gradleJars = sh(
                                     script: 'find build/libs -name "*.jar" -type f | head -1',
@@ -247,7 +185,7 @@ pipeline {
                                 }
                             }
 
-                            // Maven
+                            // Arquivar artefatos do Maven
                             if (!artifactsArchived && fileExists('target/')) {
                                 def mavenJars = sh(
                                     script: 'find target -name "*.jar" -type f | head -1',
@@ -313,7 +251,6 @@ pipeline {
                     }
                 }
 
-                // Simulação de deploy
                 sh '''
                     echo "Iniciando processo de deploy..."
                     sleep 1
@@ -364,7 +301,6 @@ pipeline {
             echo "=== Pipeline Cleanup e Resumo ==="
 
             script {
-                // Limpeza básica
                 sh '''
                     echo "Limpando arquivos temporários..."
                     find . -name "*.tmp" -delete 2>/dev/null || true
@@ -372,7 +308,6 @@ pipeline {
                     echo "Limpeza concluída"
                 '''
 
-                // Resumo final
                 def duration = currentBuild.durationString.replace(' and counting', '')
                 def status = currentBuild.result ?: 'SUCCESS'
 
