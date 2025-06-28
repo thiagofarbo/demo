@@ -2,64 +2,36 @@ version: '3.8'
 
 services:
   jenkins:
+    # Imagem oficial com Java 17 (que funciona bem)
     image: jenkins/jenkins:lts
     container_name: jenkins
     restart: unless-stopped
 
     # Portas
     ports:
-      - "8080:8080"     # Interface web do Jenkins
-      - "50000:50000"   # Porta para agentes Jenkins
+      - "8080:8080"
+      - "50000:50000"
 
-    # Volumes para persistência de dados
+    # Volumes
     volumes:
       - jenkins_home:/var/jenkins_home
-      - /var/run/docker.sock:/var/run/docker.sock  # Para usar Docker dentro do Jenkins
-      - /usr/bin/docker:/usr/bin/docker:ro          # Docker CLI
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker:ro
 
     # Variáveis de ambiente
     environment:
       - JENKINS_OPTS=--httpPort=8080
       - JAVA_OPTS=-Djenkins.install.runSetupWizard=false -Xmx2048m -Xms1024m
 
-    # Configurações de usuário para acessar Docker
     user: root
 
-    # Rede personalizada
     networks:
       - jenkins_network
 
-  # Serviço opcional: Agente Jenkins adicional
-  jenkins-agent:
-    image: jenkins/inbound-agent:latest
-    container_name: jenkins-agent
-    restart: unless-stopped
-
-    environment:
-      - JENKINS_URL=http://jenkins:8080
-      - JENKINS_AGENT_NAME=docker-agent
-      # Substitua pelos valores reais após configurar o agente no Jenkins
-      - JENKINS_SECRET=<SECRET_DO_AGENTE>
-      - JENKINS_AGENT_WORKDIR=/home/jenkins/agent
-
-    volumes:
-      - jenkins_agent_workdir:/home/jenkins/agent
-      - /var/run/docker.sock:/var/run/docker.sock
-
-    depends_on:
-      - jenkins
-
-    networks:
-      - jenkins_network
-
-# Volumes nomeados para persistência
 volumes:
   jenkins_home:
     driver: local
-  jenkins_agent_workdir:
-    driver: local
 
-# Rede personalizada
 networks:
   jenkins_network:
     driver: bridge

@@ -1,66 +1,42 @@
+// Exemplo de como ficaria no seu Jenkinsfile após configurar:
+
 pipeline {
     agent any
 
     tools {
-        maven 'Maven' // Nome configurado no Jenkins
-        jdk 'JDK'     // Nome configurado no Jenkins
+        maven 'Maven-3.9'      // Nome que você deu na configuração
+        jdk 'OpenJDK-21'       // Nome que você deu na configuração
     }
 
     stages {
-        stage('Checkout') {
+        stage('Build') {
             steps {
-                echo 'Repository checked out successfully'
-            }
-        }
-
-        stage('Clean & Compile') {
-            steps {
-                echo 'Starting Java Maven build process...'
+                // Agora Maven e Java estão disponíveis
+                sh 'java -version'
+                sh 'mvn -version'
                 sh 'mvn clean compile'
             }
         }
+    }
+}
 
-        stage('Test') {
-            steps {
-                echo 'Running tests...'
-                sh 'mvn test'
-            }
-            post {
-                always {
-                    // Publicar resultados dos testes
-                    publishTestResults testResultsPattern: 'target/surefire-reports/*.xml'
-                }
-            }
-        }
+// OU se você não configurou tools, pode usar diretamente:
 
-        stage('Package') {
-            steps {
-                echo 'Packaging application...'
-                sh 'mvn package'
-            }
-        }
+pipeline {
+    agent any
 
-        stage('Archive Artifacts') {
-            steps {
-                echo 'Archiving generated files...'
-                sh 'ls -la target/*.jar'
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-            }
-        }
+    environment {
+        JAVA_HOME = '/usr/lib/jvm/java-21-openjdk'
+        MAVEN_HOME = '/usr/share/maven'
+        PATH = "${MAVEN_HOME}/bin:${JAVA_HOME}/bin:${env.PATH}"
     }
 
-    post {
-        always {
-            echo 'Build completed!'
-        }
-        success {
-            echo 'Build completed successfully!'
-        }
-        failure {
-            echo 'Build failed!'
-        }
-        cleanup {
-            deleteDir() // Limpa workspace
+    stages {
+        stage('Build') {
+            steps {
+                sh 'java -version'
+                sh 'mvn clean compile'
+            }
         }
     }
 }
