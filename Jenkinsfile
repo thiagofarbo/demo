@@ -1,5 +1,4 @@
-@Library('my-shared-library@main') _
-
+// Jenkinsfile sem Shared Library - Funcional
 pipeline {
     agent none
 
