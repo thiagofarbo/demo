@@ -26,12 +26,12 @@ pipeline {
                 sh './gradlew bootJar' // Use 'mvn package' if using Maven
             }
         }
-        stage('Deploy') {
-            steps {
-                // Add your deployment steps here, e.g., using SCP, SSH, Docker, etc.
-                sh 'scp build/libs/*.jar user@server:/path/to/deploy'
-            }
-        }
+//         stage('Deploy') {
+//             steps {
+//                 // Add your deployment steps here, e.g., using SCP, SSH, Docker, etc.
+//                 sh 'scp build/libs/*.jar user@server:/path/to/deploy'
+//             }
+//         }
     }
 
     post {
