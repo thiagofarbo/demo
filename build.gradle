@@ -1,0 +1,47 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.5.0'
+	id 'io.spring.dependency-management' version '1.1.7'
+	id 'org.graalvm.buildtools.native' version '0.10.2'
+}
+
+group = 'com.example'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+}
+
+repositories {
+	mavenCentral()
+	maven { url 'https://repo.graalvm.org/graalvm' }
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+graalvmNative {
+	toolchainDetection = true
+	binaries {
+		main {
+			imageName = 'app'
+			mainClass = 'com.example.demo.DemoApplication' // Ajuste para a classe principal da sua aplicação
+			buildArgs.add('--no-fallback')
+			buildArgs.add('-H:+ReportExceptionStackTraces')
+			buildArgs.add('--enable-url-protocols=http,https') // Habilita protocolos comuns, se necessário
+		}
+	}
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
