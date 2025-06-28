@@ -1,127 +1,41 @@
-// Jenkinsfile - Pipeline sem ferramentas pré-configuradas
-@Library('my-shared-library@main') _
-
 pipeline {
-    agent none
-
-    environment {
-        MAVEN_OPTS = '-Xmx512m'
-    }
+    agent any
 
     stages {
-        stage('Setup Environment') {
-            agent {
-                node {
-                    label 'java21'
-                }
-            }
-            steps {
-                script {
-                    // Valida ambiente Java 21 no nó
-                    validateJavaEnvironment()
-                }
-            }
-        }
-
         stage('Checkout') {
-            agent {
-                node {
-                    label 'java21'
-                }
-            }
             steps {
-                script {
-                    gitCheckout()
-                }
+                git 'https://github.com/your-repo/spring-boot-app.git'
             }
         }
-
         stage('Build') {
-            agent {
-                node {
-                    label 'java21'
-                }
-            }
             steps {
-                script {
-                    javaBuild([
-                        buildTool: 'maven',
-                        goals: 'clean compile'
-                    ])
-                }
+                sh './gradlew clean build' // Use 'mvn clean install' if using Maven
             }
         }
-
         stage('Test') {
-            agent {
-                node {
-                    label 'java21'
-                }
-            }
             steps {
-                script {
-                    javaTest([
-                        goals: 'test',
-                        publishResults: true
-                    ])
-                }
-            }
-            post {
-                always {
-                    publishTestResults(
-                        testResultsPattern: 'target/surefire-reports/*.xml',
-                        allowEmptyResults: true
-                    )
-                }
+                sh './gradlew test' // Use 'mvn test' if using Maven
             }
         }
-
         stage('Package') {
-            agent {
-                node {
-                    label 'java21'
-                }
-            }
             steps {
-                script {
-                    javaPackage([
-                        goals: 'package -DskipTests'
-                    ])
-                }
+                sh './gradlew bootJar' // Use 'mvn package' if using Maven
             }
-            post {
-                success {
-                    archiveArtifacts artifacts: 'target/*.jar',
-                                   fingerprint: true,
-                                   allowEmptyArchive: true
-                }
+        }
+        stage('Deploy') {
+            steps {
+                // Add your deployment steps here, e.g., using SCP, SSH, Docker, etc.
+                sh 'scp build/libs/*.jar user@server:/path/to/deploy'
             }
         }
     }
 
     post {
-        always {
-            node('java21') {
-                script {
-                    cleanupBuild()
-                }
-            }
-        }
         success {
-            script {
-                sendNotification([
-                    status: 'SUCCESS',
-                    message: "Build ${env.BUILD_NUMBER} concluído com sucesso!"
-                ])
-            }
+            echo 'Build and Deploy succeeded!'
         }
         failure {
-            script {
-                sendNotification([
-                    status: 'FAILURE',
-                    message: "Build ${env.BUILD_NUMBER} falhou!"
-                ])
-            }
+            echo 'Build or Deploy failed!'
         }
     }
 }
