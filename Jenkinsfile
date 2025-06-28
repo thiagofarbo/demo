@@ -1,15 +1,17 @@
-#!/bin/bash
-echo "Starting Java Maven build process..."
+@Library('my-shared-library@main')
 
-# Limpar e baixar dependências
-mvn clean compile
-
-# Executar testes
-mvn test
-
-# Gerar JAR/WAR
-mvn package
-
-echo "Build completed successfully!"
-echo "Generated files:"
-ls -la target/*.jar"
+pipeline {
+    agent { node { label 'java21' } }
+    stages {
+        stage('Build') {
+            steps {
+                script {
+                    gitCheckout()
+                    javaBuild()
+                    javaTest()
+                    javaPackage()
+                }
+            }
+        }
+    }
+}
