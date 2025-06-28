@@ -4,7 +4,7 @@ pipeline {
     agent any
 
     tools {
-        maven 'Maven-3.9'      // Nome que você deu na configuração
+        maven 'maven-3.6.3'      // Nome que você deu na configuração
         jdk 'OpenJDK-21'       // Nome que você deu na configuração
     }
 
