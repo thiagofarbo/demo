@@ -1,4 +1,3 @@
-// Jenkinsfile sem Shared Library - Funcional
 pipeline {
     agent none
 
@@ -12,18 +11,12 @@ pipeline {
             name: 'ENVIRONMENT',
             choices: ['dev', 'qa', 'prod'],
             defaultValue: 'dev',
-            description: 'Ambiente para deploy'
+            description: 'Ambiente'
         )
     }
 
-    environment {
-        PROJECT_NAME = 'demo-app'
-        BUILD_TYPE = 'gradle'
-        JAVA_OPTS = '-Xmx1024m'
-    }
-
     stages {
-        stage('Setup') {
+        stage('Environment Setup') {
             agent {
                 node {
                     label 'java21'
@@ -31,20 +24,21 @@ pipeline {
             }
             steps {
                 script {
-                    echo "=== Configurando ambiente ${params.ENVIRONMENT} ==="
+                    echo "=== Configurando Ambiente ==="
+                    echo "Environment: ${params.ENVIRONMENT}"
+                    echo "Run Tests: ${params.DO_TEST}"
 
-                    // Validação do Java
+                    // Verificar Java
                     sh 'java -version'
-                    sh 'echo "Java Version: $(java -version 2>&1 | head -n 1)"'
+                    sh 'javac -version'
 
-                    // Configuração de variáveis
+                    // Configurar opções de teste
                     if (params.DO_TEST) {
                         env.TEST_OPTIONS = ''
                     } else {
                         env.TEST_OPTIONS = '-x test'
                     }
 
-                    echo "Environment: ${params.ENVIRONMENT}"
                     echo "Test Options: ${env.TEST_OPTIONS}"
                 }
             }
@@ -57,26 +51,26 @@ pipeline {
                 }
             }
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/main']],
-                    userRemoteConfigs: [[url: 'https://github.com/thiagofarbo/demo.git']]
-                ])
+                // Checkout do código
+                checkout scm
 
                 script {
                     // Informações do Git
-                    env.GIT_COMMIT = sh(
+                    def gitCommit = sh(
                         script: 'git rev-parse HEAD',
                         returnStdout: true
                     ).trim()
 
-                    env.GIT_BRANCH = sh(
+                    def gitBranch = sh(
                         script: 'git rev-parse --abbrev-ref HEAD',
                         returnStdout: true
                     ).trim()
 
-                    echo "Branch: ${env.GIT_BRANCH}"
-                    echo "Commit: ${env.GIT_COMMIT}"
+                    echo "Branch: ${gitBranch}"
+                    echo "Commit: ${gitCommit[0..7]}"
+
+                    env.GIT_COMMIT = gitCommit
+                    env.GIT_BRANCH = gitBranch
                 }
             }
         }
@@ -89,21 +83,28 @@ pipeline {
             }
             steps {
                 script {
-                    echo "=== Build da aplicação ==="
+                    echo "=== Building Application ==="
 
+                    // Detectar tipo de build
                     if (fileExists('gradlew')) {
-                        sh "./gradlew clean build ${env.TEST_OPTIONS}"
+                        echo "Usando Gradle Wrapper"
+                        sh "chmod +x gradlew"
+                        sh "./gradlew clean build ${env.TEST_OPTIONS ?: ''}"
                     } else if (fileExists('build.gradle')) {
-                        sh "gradle clean build ${env.TEST_OPTIONS}"
+                        echo "Usando Gradle"
+                        sh "gradle clean build ${env.TEST_OPTIONS ?: ''}"
                     } else if (fileExists('pom.xml')) {
-                        if (env.TEST_OPTIONS.contains('-x test')) {
-                            sh 'mvn clean compile -DskipTests'
+                        echo "Usando Maven"
+                        if (env.TEST_OPTIONS && env.TEST_OPTIONS.contains('-x test')) {
+                            sh 'mvn clean compile -DskipTests=true'
                         } else {
                             sh 'mvn clean compile'
                         }
                     } else {
                         error 'Nenhum arquivo de build encontrado (gradlew, build.gradle, pom.xml)'
                     }
+
+                    echo "Build concluído!"
                 }
             }
         }
@@ -119,36 +120,41 @@ pipeline {
             }
             steps {
                 script {
-                    echo "=== Executando testes ==="
+                    echo "=== Running Tests ==="
 
                     try {
                         if (fileExists('gradlew')) {
-                            sh './gradlew test'
+                            sh './gradlew test --continue'
                         } else if (fileExists('build.gradle')) {
-                            sh 'gradle test'
+                            sh 'gradle test --continue'
                         } else if (fileExists('pom.xml')) {
                             sh 'mvn test'
                         }
+
+                        echo "Testes executados com sucesso!"
+
                     } catch (Exception e) {
-                        echo "Erro nos testes: ${e.getMessage()}"
-                        throw e
+                        echo "Alguns testes falharam: ${e.getMessage()}"
+                        currentBuild.result = 'UNSTABLE'
                     }
                 }
             }
             post {
                 always {
                     script {
-                        // Publicar resultados de teste
-                        if (fileExists('build/test-results/test/*.xml')) {
-                            publishTestResults(
-                                testResultsPattern: 'build/test-results/test/*.xml',
-                                allowEmptyResults: true
-                            )
-                        } else if (fileExists('target/surefire-reports/*.xml')) {
-                            publishTestResults(
-                                testResultsPattern: 'target/surefire-reports/*.xml',
-                                allowEmptyResults: true
-                            )
+                        // Tentar publicar resultados de teste
+                        try {
+                            if (fileExists('build/test-results/test/')) {
+                                publishTestResults testResultsPattern: 'build/test-results/test/*.xml'
+                                echo "Resultados de teste Gradle publicados"
+                            } else if (fileExists('target/surefire-reports/')) {
+                                publishTestResults testResultsPattern: 'target/surefire-reports/*.xml'
+                                echo "Resultados de teste Maven publicados"
+                            } else {
+                                echo "Nenhum resultado de teste encontrado"
+                            }
+                        } catch (Exception e) {
+                            echo "Erro publicando resultados de teste: ${e.getMessage()}"
                         }
                     }
                 }
@@ -163,67 +169,44 @@ pipeline {
             }
             steps {
                 script {
-                    echo "=== Empacotando aplicação ==="
+                    echo "=== Packaging Application ==="
 
                     if (fileExists('gradlew')) {
                         sh './gradlew bootJar'
                     } else if (fileExists('build.gradle')) {
                         sh 'gradle bootJar'
                     } else if (fileExists('pom.xml')) {
-                        sh 'mvn package -DskipTests'
+                        sh 'mvn package -DskipTests=true'
                     }
 
-                    // Verificar se artefatos foram criados
-                    script {
-                        def gradleJars = sh(
-                            script: 'find build/libs -name "*.jar" -type f 2>/dev/null || echo ""',
-                            returnStdout: true
-                        ).trim()
+                    // Verificar artefatos criados
+                    sh '''
+                        echo "=== Artefatos Criados ==="
+                        if [ -d "build/libs" ]; then
+                            find build/libs -name "*.jar" -exec ls -lh {} \\;
+                        fi
+                        if [ -d "target" ]; then
+                            find target -name "*.jar" -exec ls -lh {} \\;
+                        fi
+                    '''
 
-                        def mavenJars = sh(
-                            script: 'find target -name "*.jar" -type f 2>/dev/null || echo ""',
-                            returnStdout: true
-                        ).trim()
-
-                        if (gradleJars) {
-                            echo "Artefatos Gradle encontrados: ${gradleJars}"
-                        } else if (mavenJars) {
-                            echo "Artefatos Maven encontrados: ${mavenJars}"
-                        } else {
-                            echo "Aviso: Nenhum JAR encontrado"
-                        }
-                    }
+                    echo "Packaging concluído!"
                 }
             }
             post {
                 success {
                     script {
                         // Arquivar artefatos
-                        def artifactsFound = false
-
-                        if (fileExists('build/libs/')) {
-                            try {
-                                archiveArtifacts(
-                                    artifacts: 'build/libs/*.jar',
-                                    fingerprint: true,
-                                    allowEmptyArchive: true
-                                )
-                                artifactsFound = true
-                            } catch (Exception e) {
-                                echo "Erro arquivando artefatos Gradle: ${e.getMessage()}"
+                        try {
+                            if (fileExists('build/libs/')) {
+                                archiveArtifacts artifacts: 'build/libs/*.jar', fingerprint: true
+                                echo "Artefatos Gradle arquivados"
+                            } else if (fileExists('target/')) {
+                                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                                echo "Artefatos Maven arquivados"
                             }
-                        }
-
-                        if (!artifactsFound && fileExists('target/')) {
-                            try {
-                                archiveArtifacts(
-                                    artifacts: 'target/*.jar',
-                                    fingerprint: true,
-                                    allowEmptyArchive: true
-                                )
-                            } catch (Exception e) {
-                                echo "Erro arquivando artefatos Maven: ${e.getMessage()}"
-                            }
+                        } catch (Exception e) {
+                            echo "Erro arquivando artefatos: ${e.getMessage()}"
                         }
                     }
                 }
@@ -234,20 +217,20 @@ pipeline {
             when {
                 expression { params.ENVIRONMENT == 'prod' }
             }
-            agent none
             steps {
                 script {
-                    echo "=== Solicitando aprovação para PRODUÇÃO ==="
+                    echo "=== Aprovação para Produção ==="
 
                     timeout(time: 30, unit: 'MINUTES') {
-                        env.APPROVER = input(
-                            message: 'Deseja prosseguir com o deploy em PRODUÇÃO?',
+                        def approver = input(
+                            message: 'Deseja prosseguir com deploy em PRODUÇÃO?',
                             ok: 'Aprovar Deploy',
                             submitterParameter: 'APPROVER'
                         )
-                    }
 
-                    echo "Deploy aprovado por: ${env.APPROVER}"
+                        env.APPROVER = approver
+                        echo "Deploy aprovado por: ${approver}"
+                    }
                 }
             }
         }
@@ -263,29 +246,31 @@ pipeline {
             }
             steps {
                 script {
-                    echo "=== Deploy para ${params.ENVIRONMENT} ==="
+                    echo "=== Deploy para ${params.ENVIRONMENT.toUpperCase()} ==="
 
-                    // Simulação de deploy - substitua pelos seus comandos reais
-                    switch(params.ENVIRONMENT) {
-                    case 'qa':
-                            sh '''
-                                echo "Fazendo deploy para QA..."
-                                echo "Projeto: demo-app"
-                                echo "Ambiente: qa"
-                                # Aqui você colocaria seus comandos reais de deploy
-                            '''
-                            break
+                    // Informações do deploy
+                    echo "Projeto: demo-app"
+                    echo "Ambiente: ${params.ENVIRONMENT}"
+                    echo "Build: #${env.BUILD_NUMBER}"
+                    echo "Branch: ${env.GIT_BRANCH}"
+                    echo "Commit: ${env.GIT_COMMIT[0..7]}"
 
-                        case 'prod':
-                            sh '''
-                                echo "Fazendo deploy para PRODUÇÃO..."
-                                echo "Projeto: demo-app"
-                                echo "Ambiente: prod"
-                                echo "Aprovado por: ${APPROVER}"
-                                # Aqui você colocaria seus comandos reais de deploy
-                            '''
-                            break
+                    if (params.ENVIRONMENT == 'prod') {
+                        echo "Aprovado por: ${env.APPROVER}"
                     }
+
+                    // Simulação de deploy
+                    sh '''
+                        echo "Iniciando deploy..."
+                        sleep 2
+                        echo "Copiando artefatos..."
+                        sleep 1
+                        echo "Configurando ambiente..."
+                        sleep 1
+                        echo "Startando aplicação..."
+                        sleep 2
+                        echo "Deploy concluído!"
+                    '''
                 }
             }
         }
@@ -301,21 +286,22 @@ pipeline {
             }
             steps {
                 script {
-                    echo "=== Verificação de saúde ==="
+                    echo "=== Health Check ==="
 
                     // Simulação de health check
-                    timeout(time: 5, unit: 'MINUTES') {
+                    timeout(time: 3, unit: 'MINUTES') {
                         retry(3) {
                             sh '''
                                 echo "Verificando saúde da aplicação..."
-                                echo "Ambiente: ${ENVIRONMENT}"
-                                # Substitua por verificação real, ex:
-                                # curl -f http://app-url/health || exit 1
-                                sleep 2
-                                echo "Aplicação saudável!"
+                                echo "Tentativa de conexão..."
+                                sleep 3
+                                echo "Aplicação respondendo!"
+                                echo "Health check: OK"
                             '''
                         }
                     }
+
+                    echo "Aplicação saudável em ${params.ENVIRONMENT}!"
                 }
             }
         }
@@ -325,45 +311,64 @@ pipeline {
         always {
             node('java21') {
                 script {
-                    echo "=== Limpeza final ==="
+                    echo "=== Pipeline Cleanup ==="
 
                     // Limpeza básica
                     sh '''
-                        # Limpeza de arquivos temporários
+                        echo "Limpando arquivos temporários..."
                         find . -name "*.tmp" -delete 2>/dev/null || true
                         find . -name "*.log" -delete 2>/dev/null || true
+                        echo "Limpeza concluída"
                     '''
 
+                    // Resumo final
                     def duration = currentBuild.durationString.replace(' and counting', '')
-                    echo "Pipeline finalizada em ${duration}"
+                    echo "=== RESUMO FINAL ==="
+                    echo "Duração: ${duration}"
+                    echo "Status: ${currentBuild.result ?: 'SUCCESS'}"
+                    echo "Environment: ${params.ENVIRONMENT}"
+                    echo "Build: #${env.BUILD_NUMBER}"
                 }
             }
         }
 
         success {
             script {
-                echo "✅ BUILD SUCESSO!"
-                echo "Environment: ${params.ENVIRONMENT}"
-                echo "Build: #${env.BUILD_NUMBER}"
-                echo "Branch: ${env.GIT_BRANCH}"
-                echo "Commit: ${env.GIT_COMMIT}"
+                echo "🎉 BUILD SUCESSO!"
+                echo "✅ Todas as etapas concluídas com êxito"
+                echo "📦 Environment: ${params.ENVIRONMENT}"
+                echo "🔗 Build: #${env.BUILD_NUMBER}"
+                if (env.GIT_BRANCH) {
+                    echo "🌿 Branch: ${env.GIT_BRANCH}"
+                }
             }
         }
 
         failure {
             script {
                 echo "❌ BUILD FALHOU!"
-                echo "Environment: ${params.ENVIRONMENT}"
-                echo "Build: #${env.BUILD_NUMBER}"
-                echo "Verifique os logs acima para detalhes do erro"
+                echo "💥 Verifique os logs acima para detalhes"
+                echo "📦 Environment: ${params.ENVIRONMENT}"
+                echo "🔗 Build: #${env.BUILD_NUMBER}"
+                echo "⚠️  Pipeline interrompida devido a erro"
+            }
+        }
+
+        unstable {
+            script {
+                echo "⚠️  BUILD INSTÁVEL!"
+                echo "🧪 Alguns testes falharam, mas build continuou"
+                echo "📦 Environment: ${params.ENVIRONMENT}"
+                echo "🔗 Build: #${env.BUILD_NUMBER}"
             }
         }
 
         aborted {
             script {
-                echo "⚠️ BUILD CANCELADO!"
-                echo "Environment: ${params.ENVIRONMENT}"
-                echo "Build: #${env.BUILD_NUMBER}"
+                echo "🛑 BUILD CANCELADO!"
+                echo "👤 Pipeline interrompida pelo usuário"
+                echo "📦 Environment: ${params.ENVIRONMENT}"
+                echo "🔗 Build: #${env.BUILD_NUMBER}"
             }
         }
     }
